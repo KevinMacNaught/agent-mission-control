@@ -51,7 +51,13 @@ Required vars in `.env.local`:
 npm run convex:check
 ```
 
-This runs a non-interactive `convex dev --once` against the self-hosted backend.
+This runs a non-interactive `convex dev --once` check against the self-hosted backend.
+
+If the backend is not initialized yet, use:
+
+```bash
+npm run convex:check:bootstrap
+```
 
 ### 6) Start frontend
 
@@ -66,8 +72,8 @@ Open `http://localhost:3000`.
 - `npm run test`
 - `npm run lint`
 - `npm run build`
-- `npm run convex:dev`
-- `npm run convex:check`
-- `npm run convex:check:bootstrap`
-- `npm run convex:self-hosted:up`
-- `npm run convex:self-hosted:down`
+- `npm run convex:dev` - watch/push Convex functions continuously
+- `npm run convex:check` - run Convex checks against self-hosted backend
+- `npm run convex:check:bootstrap` - bootstrap checks with typecheck disabled
+- `npm run convex:self-hosted:up` - start local Convex backend + dashboard
+- `npm run convex:self-hosted:down` - stop local Convex services
