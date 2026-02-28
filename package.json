@@ -7,8 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "convex:dev": "convex dev",
-    "convex:check": "convex dev --once --typecheck disable",
+    "convex:dev": "npx convex dev",
+    "convex:check": "npx convex dev --once --typecheck disable",
     "convex:self-hosted:up": "docker compose --env-file convex/self-hosted/.env -f convex/self-hosted/docker-compose.yml up -d",
     "convex:self-hosted:down": "docker compose --env-file convex/self-hosted/.env -f convex/self-hosted/docker-compose.yml down"
   },
