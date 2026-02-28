@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
+import { Providers } from "./providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Agent Mission Control",
   description:
-    "Milestone 0 shell scaffold with Next.js App Router, shadcn/ui, and the darkmatter theme.",
+    "Mission-control dashboard shell with read-only visibility for repos, issues, and pull requests.",
 };
 
 export default function RootLayout({
@@ -15,7 +16,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="min-h-screen bg-background text-foreground antialiased">
-        {children}
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
