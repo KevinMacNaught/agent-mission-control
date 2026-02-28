@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test": "node scripts/setup-test-generated.mjs && node --test --experimental-strip-types convex/kanban.test.ts",
     "lint": "eslint",
     "convex:dev": "convex dev",
     "convex:check": "convex dev --once --typecheck disable",
