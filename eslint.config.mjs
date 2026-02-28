@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Convex generated artifacts (do not hand-edit)
+    "convex/_generated/**",
   ]),
 ]);
 

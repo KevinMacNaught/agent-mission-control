@@ -1,10 +1,13 @@
 # Agent Mission Control
 
-Next.js frontend + Convex backend for mission tracking.
+Mission-control web app for orchestrated coding workflows.
+
+- Next.js + React + TypeScript
+- shadcn/ui components only
+- dnd-kit for Kanban interactions
+- Convex self-hosted for app state (no ORM layer)
 
 ## Development setup (Convex self-hosted)
-
-This repo is configured to use **self-hosted Convex locally** (not Prisma/SQLite in app code).
 
 ### 1) Install dependencies
 
@@ -40,14 +43,21 @@ Required vars in `.env.local`:
 - `CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210`
 - `CONVEX_SELF_HOSTED_ADMIN_KEY=<generated key>`
 - `NEXT_PUBLIC_CONVEX_URL=http://127.0.0.1:3210`
+- `NEXT_PUBLIC_CONVEX_SITE_URL=http://127.0.0.1:3211`
 
-### 5) Push functions to local backend
+### 5) Push/check functions
 
 ```bash
 npm run convex:check
 ```
 
-This runs a non-interactive `convex dev --once` against the self-hosted backend.
+This runs a non-interactive `convex dev --once` check against the self-hosted backend.
+
+If the backend is not initialized yet, use:
+
+```bash
+npm run convex:check:bootstrap
+```
 
 ### 6) Start frontend
 
@@ -57,8 +67,12 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-## Useful commands
+## Useful scripts
 
+- `npm run lint`
+- `npm run build`
 - `npm run convex:dev` - watch/push Convex functions continuously
+- `npm run convex:check` - run Convex checks against self-hosted backend
+- `npm run convex:check:bootstrap` - bootstrap checks with typecheck disabled
 - `npm run convex:self-hosted:up` - start local Convex backend + dashboard
 - `npm run convex:self-hosted:down` - stop local Convex services
