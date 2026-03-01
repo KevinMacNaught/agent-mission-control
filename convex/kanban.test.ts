@@ -3,10 +3,10 @@ import test from "node:test"
 
 import { moveCard, moveColumn } from "./kanban.ts"
 
-type TableName = "boards" | "columns" | "cards" | "activities"
+type TableName = "boards" | "columns" | "cards" | "executions" | "activities"
 type Row = { _id: string; [key: string]: unknown }
 
-const TABLES: TableName[] = ["boards", "columns", "cards", "activities"]
+const TABLES: TableName[] = ["boards", "columns", "cards", "executions", "activities"]
 const NOW = 1_730_000_000_000
 
 class InMemoryDb {
@@ -18,6 +18,7 @@ class InMemoryDb {
       boards: seed.boards.map((row) => ({ ...row })),
       columns: seed.columns.map((row) => ({ ...row })),
       cards: seed.cards.map((row) => ({ ...row })),
+      executions: seed.executions.map((row) => ({ ...row })),
       activities: seed.activities.map((row) => ({ ...row })),
     }
   }
@@ -203,6 +204,7 @@ function createFixture(
       },
     ],
     cards,
+    executions: [],
     activities: [],
   })
 
@@ -240,6 +242,10 @@ function cardsInColumn(fixture: Fixture, columnId: string) {
 
 function activities(fixture: Fixture) {
   return fixture.db.rows("activities")
+}
+
+function executions(fixture: Fixture) {
+  return fixture.db.rows("executions")
 }
 
 async function withFixedNow(run: () => Promise<void>) {
@@ -334,7 +340,7 @@ test("moveCard same-column reorder updates order and records activity", async ()
   assert.equal(activity.createdAt, NOW)
 })
 
-test("moveCard cross-column move reorders both columns and records activity", async () => {
+test("moveCard into In Progress records dry-run execution lifecycle", async () => {
   const fixture = createFixture({
     backlog: ["Card 1", "Card 2"],
     inProgress: ["Card 3", "Card 4"],
@@ -362,14 +368,45 @@ test("moveCard cross-column move reorders both columns and records activity", as
     { id: fixture.cardIdsByTitle.get("Card 4"), order: 2, columnId: fixture.ids.columns.inProgress, title: "Card 4" },
   ])
 
-  const [activity] = activities(fixture)
-  assert.equal(activity.type, "card_moved")
-  assert.equal(
-    activity.message,
-    'Moved card "Card 2" from "Backlog" to "In Progress"'
+  const [execution] = executions(fixture)
+  assert.ok(execution)
+  assert.equal(execution.boardId, fixture.ids.board)
+  assert.equal(execution.cardId, cardId)
+  assert.equal(execution.mode, "dry_run")
+  assert.equal(execution.status, "succeeded")
+  assert.equal(execution.startedAt, NOW)
+  assert.equal(execution.completedAt, NOW)
+  assert.equal(execution.updatedAt, NOW)
+
+  assert.deepEqual(
+    activities(fixture).map((activity) => ({
+      type: activity.type,
+      executionStatus: activity.executionStatus,
+      message: activity.message,
+    })),
+    [
+      {
+        type: "card_moved",
+        executionStatus: undefined,
+        message: 'Moved card "Card 2" from "Backlog" to "In Progress"',
+      },
+      {
+        type: "execution_transition",
+        executionStatus: "queued",
+        message: 'Execution queued for "Card 2" (dry run)',
+      },
+      {
+        type: "execution_transition",
+        executionStatus: "running",
+        message: 'Execution running for "Card 2" (dry run)',
+      },
+      {
+        type: "execution_transition",
+        executionStatus: "succeeded",
+        message: 'Execution succeeded for "Card 2" (dry run)',
+      },
+    ]
   )
-  assert.equal(activity.fromIndex, 1)
-  assert.equal(activity.toIndex, 1)
 })
 
 test("moveCard can move to an empty target column", async () => {
@@ -399,6 +436,8 @@ test("moveCard can move to an empty target column", async () => {
   ])
 
   const [activity] = activities(fixture)
+  assert.equal(executions(fixture).length, 0)
+  assert.equal(activity.type, "card_moved")
   assert.equal(activity.toIndex, 0)
 })
 
