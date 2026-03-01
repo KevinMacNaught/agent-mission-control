@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { api } from "@/convex/_generated/api";
+import { KanbanBoard } from "@/components/kanban/kanban-board";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -95,14 +96,14 @@ export default function Home() {
           <Card className="h-full gap-0 overflow-hidden border-sidebar-border bg-sidebar text-sidebar-foreground">
             <CardHeader className="gap-3 border-b border-sidebar-border">
               <Badge variant="secondary" className="w-fit">
-                Milestone 1
+                Milestone 2
               </Badge>
               <CardTitle className="flex items-center gap-2 text-base">
                 <Bot className="size-4" />
                 Agent Mission Control
               </CardTitle>
               <CardDescription className="text-sidebar-foreground/80">
-                Design shell + read-only visibility dashboard
+                Visibility dashboard + persisted Kanban workflow
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-1 flex-col gap-4 px-3 py-4">
@@ -158,7 +159,8 @@ export default function Home() {
                 <div>
                   <h1 className="text-2xl font-semibold tracking-tight">Visibility Dashboard</h1>
                   <p className="text-sm text-muted-foreground">
-                    Read-only GitHub visibility for synced repositories, issues, and pull requests.
+                    Read-only GitHub visibility for synced repositories, issues, pull requests,
+                    and persisted Kanban execution.
                   </p>
                 </div>
               </div>
@@ -304,6 +306,17 @@ export default function Home() {
                 ))}
               </CardContent>
             </Card>
+          </section>
+
+          <section className="space-y-3">
+            <div className="space-y-1">
+              <Badge variant="secondary">Kanban MVP</Badge>
+              <h2 className="text-xl font-semibold tracking-tight">Persisted Drag-and-Drop Board</h2>
+              <p className="text-sm text-muted-foreground">
+                dnd-kit interactions are persisted via Convex and activity is logged in real time.
+              </p>
+            </div>
+            <KanbanBoard />
           </section>
         </section>
       </div>

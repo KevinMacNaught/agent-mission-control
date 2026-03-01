@@ -69,6 +69,7 @@ Open `http://localhost:3000`.
 
 ## Useful scripts
 
+- `npm run test`
 - `npm run lint`
 - `npm run build`
 - `npm run convex:dev` - watch/push Convex functions continuously

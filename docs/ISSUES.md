@@ -12,6 +12,12 @@ Current expected implementation target:
 
 ## Review checklist for backend-related issues
 
-- [ ] Uses Convex functions/API instead of app-managed SQLite/Prisma paths
-- [ ] Documents required env vars without committing secrets
-- [ ] Includes local verification command(s) that do not require cloud login
+- [x] Uses Convex functions/API instead of app-managed SQLite/Prisma paths
+- [x] Documents required env vars without committing secrets
+- [x] Includes local verification command(s) that do not require cloud login
+
+## Issue #3 (Milestone 2 Kanban MVP)
+
+- Convex schema + queries/mutations persist board columns/cards and move history.
+- dnd-kit powers sortable columns/cards with cross-column card movement.
+- UI surfaces activity history from Convex (`card_moved` and `column_moved`).
