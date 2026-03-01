@@ -37,10 +37,18 @@ type DragTarget =
       id: string
     }
 
+type ExecutionStatus = "queued" | "running" | "succeeded" | "failed"
+
 type BoardCard = {
   _id: Id<"cards">
   title: string
   order: number
+  execution?: {
+    _id: Id<"executions">
+    mode: "dry_run"
+    status: ExecutionStatus
+    updatedAt: number
+  }
 }
 
 type BoardColumn = {
@@ -98,6 +106,34 @@ function formatTimestamp(timestamp: number) {
   }).format(timestamp)
 }
 
+function getExecutionBadgeVariant(status: ExecutionStatus) {
+  if (status === "failed") {
+    return "destructive"
+  }
+
+  if (status === "succeeded") {
+    return "secondary"
+  }
+
+  return "outline"
+}
+
+function getExecutionBadgeLabel(status: ExecutionStatus) {
+  if (status === "queued") {
+    return "Queued"
+  }
+
+  if (status === "running") {
+    return "Running"
+  }
+
+  if (status === "succeeded") {
+    return "Succeeded"
+  }
+
+  return "Failed"
+}
+
 function SortableCardItem({ card }: { card: BoardCard }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: createCardDragId(String(card._id)) })
@@ -120,6 +156,13 @@ function SortableCardItem({ card }: { card: BoardCard }) {
         <p className="text-sm leading-5">{card.title}</p>
         <GripVertical className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
       </div>
+      {card.execution ? (
+        <div className="mt-2">
+          <Badge variant={getExecutionBadgeVariant(card.execution.status)}>
+            Dry run: {getExecutionBadgeLabel(card.execution.status)}
+          </Badge>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -137,7 +180,7 @@ function SortableColumnItem({ column }: { column: BoardColumn }) {
       }}
       className="w-80 shrink-0"
     >
-      <Card className={cn("gap-4 py-4", isDragging && "opacity-60")}> 
+      <Card className={cn("gap-4 py-4", isDragging && "opacity-60")}>
         <CardHeader className="px-4 pb-0">
           <div
             className="flex cursor-grab items-center justify-between active:cursor-grabbing"

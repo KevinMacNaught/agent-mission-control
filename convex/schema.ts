@@ -77,11 +77,41 @@ export default defineSchema({
     .index("by_board", ["boardId"])
     .index("by_column_order", ["columnId", "order"]),
 
+  executions: defineTable({
+    boardId: v.id("boards"),
+    cardId: v.id("cards"),
+    mode: v.union(v.literal("dry_run")),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("succeeded"),
+      v.literal("failed"),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+  }).index("by_board", ["boardId"]),
+
   activities: defineTable({
     boardId: v.id("boards"),
-    type: v.union(v.literal("card_moved"), v.literal("column_moved")),
+    type: v.union(
+      v.literal("card_moved"),
+      v.literal("column_moved"),
+      v.literal("execution_transition"),
+    ),
     message: v.string(),
     cardId: v.optional(v.id("cards")),
+    executionId: v.optional(v.id("executions")),
+    executionStatus: v.optional(
+      v.union(
+        v.literal("queued"),
+        v.literal("running"),
+        v.literal("succeeded"),
+        v.literal("failed"),
+      )
+    ),
     columnId: v.optional(v.id("columns")),
     fromColumnId: v.optional(v.id("columns")),
     toColumnId: v.optional(v.id("columns")),

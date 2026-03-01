@@ -20,6 +20,26 @@ const DEFAULT_CARDS = [
   },
 ] as const
 
+const IN_PROGRESS_COLUMN_TITLE = "In Progress" as const
+
+type ExecutionStatus = "queued" | "running" | "succeeded" | "failed"
+
+function getExecutionTransitionMessage(status: ExecutionStatus, cardTitle: string) {
+  if (status === "queued") {
+    return `Execution queued for "${cardTitle}" (dry run)`
+  }
+
+  if (status === "running") {
+    return `Execution running for "${cardTitle}" (dry run)`
+  }
+
+  if (status === "succeeded") {
+    return `Execution succeeded for "${cardTitle}" (dry run)`
+  }
+
+  return `Execution failed for "${cardTitle}" (dry run)`
+}
+
 function moveInArray<T>(items: T[], fromIndex: number, toIndex: number) {
   const next = [...items]
   const [moved] = next.splice(fromIndex, 1)
@@ -118,7 +138,7 @@ export const getBoard = query({
       return null
     }
 
-    const [columns, cards, activities] = await Promise.all([
+    const [columns, cards, activities, executions] = await Promise.all([
       ctx.db
         .query("columns")
         .withIndex("by_board_order", (q) => q.eq("boardId", board._id))
@@ -132,9 +152,14 @@ export const getBoard = query({
         .withIndex("by_board_createdAt", (q) => q.eq("boardId", board._id))
         .order("desc")
         .take(25),
+      ctx.db
+        .query("executions")
+        .withIndex("by_board", (q) => q.eq("boardId", board._id))
+        .collect(),
     ])
 
     const cardsByColumn = new Map<Id<"columns">, Doc<"cards">[]>()
+    const latestExecutionByCard = new Map<Id<"cards">, Doc<"executions">>()
 
     for (const card of cards) {
       const existingCards = cardsByColumn.get(card.columnId) ?? []
@@ -142,13 +167,37 @@ export const getBoard = query({
       cardsByColumn.set(card.columnId, existingCards)
     }
 
+    for (const execution of executions) {
+      const existingExecution = latestExecutionByCard.get(execution.cardId)
+
+      if (!existingExecution || execution.createdAt > existingExecution.createdAt) {
+        latestExecutionByCard.set(execution.cardId, execution)
+      }
+    }
+
     return {
       board,
       columns: columns.map((column) => ({
         ...column,
-        cards: (cardsByColumn.get(column._id) ?? []).sort(
-          (a, b) => a.order - b.order
-        ),
+        cards: (cardsByColumn.get(column._id) ?? [])
+          .sort((a, b) => a.order - b.order)
+          .map((card) => {
+            const execution = latestExecutionByCard.get(card._id)
+
+            if (!execution) {
+              return card
+            }
+
+            return {
+              ...card,
+              execution: {
+                _id: execution._id,
+                mode: execution.mode,
+                status: execution.status,
+                updatedAt: execution.updatedAt,
+              },
+            }
+          }),
       })),
       activities,
     }
@@ -349,5 +398,93 @@ export const moveCard = mutation({
       toIndex,
       createdAt: now,
     })
+
+    if (targetColumn.title !== IN_PROGRESS_COLUMN_TITLE) {
+      return
+    }
+
+    const queuedAt = Date.now()
+    const executionId = await ctx.db.insert("executions", {
+      boardId: args.boardId,
+      cardId: card._id,
+      mode: "dry_run",
+      status: "queued",
+      createdAt: queuedAt,
+      updatedAt: queuedAt,
+    })
+
+    await ctx.db.insert("activities", {
+      boardId: args.boardId,
+      type: "execution_transition",
+      message: getExecutionTransitionMessage("queued", card.title),
+      cardId: card._id,
+      executionId,
+      executionStatus: "queued",
+      fromIndex: 0,
+      toIndex: 0,
+      createdAt: queuedAt,
+    })
+
+    try {
+      const runningAt = Date.now()
+      await ctx.db.patch(executionId, {
+        status: "running",
+        startedAt: runningAt,
+        updatedAt: runningAt,
+      })
+
+      await ctx.db.insert("activities", {
+        boardId: args.boardId,
+        type: "execution_transition",
+        message: getExecutionTransitionMessage("running", card.title),
+        cardId: card._id,
+        executionId,
+        executionStatus: "running",
+        fromIndex: 0,
+        toIndex: 0,
+        createdAt: runningAt,
+      })
+
+      const succeededAt = Date.now()
+      await ctx.db.patch(executionId, {
+        status: "succeeded",
+        completedAt: succeededAt,
+        updatedAt: succeededAt,
+      })
+
+      await ctx.db.insert("activities", {
+        boardId: args.boardId,
+        type: "execution_transition",
+        message: getExecutionTransitionMessage("succeeded", card.title),
+        cardId: card._id,
+        executionId,
+        executionStatus: "succeeded",
+        fromIndex: 0,
+        toIndex: 0,
+        createdAt: succeededAt,
+      })
+    } catch (error) {
+      const failedAt = Date.now()
+      const executionError = error instanceof Error ? error.message : "Unknown execution error"
+
+      await ctx.db.patch(executionId, {
+        status: "failed",
+        error: executionError,
+        completedAt: failedAt,
+        updatedAt: failedAt,
+      })
+
+      await ctx.db.insert("activities", {
+        boardId: args.boardId,
+        type: "execution_transition",
+        message: getExecutionTransitionMessage("failed", card.title),
+        cardId: card._id,
+        executionId,
+        executionStatus: "failed",
+        fromIndex: 0,
+        toIndex: 0,
+        createdAt: failedAt,
+      })
+    }
   },
 })
