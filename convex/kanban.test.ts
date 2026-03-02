@@ -340,7 +340,7 @@ test("moveCard same-column reorder updates order and records activity", async ()
   assert.equal(activity.createdAt, NOW)
 })
 
-test("moveCard into In Progress records dry-run execution lifecycle", async () => {
+test("moveCard into In Progress only moves card and records activity", async () => {
   const fixture = createFixture({
     backlog: ["Card 1", "Card 2"],
     inProgress: ["Card 3", "Card 4"],
@@ -368,15 +368,7 @@ test("moveCard into In Progress records dry-run execution lifecycle", async () =
     { id: fixture.cardIdsByTitle.get("Card 4"), order: 2, columnId: fixture.ids.columns.inProgress, title: "Card 4" },
   ])
 
-  const [execution] = executions(fixture)
-  assert.ok(execution)
-  assert.equal(execution.boardId, fixture.ids.board)
-  assert.equal(execution.cardId, cardId)
-  assert.equal(execution.mode, "dry_run")
-  assert.equal(execution.status, "succeeded")
-  assert.equal(execution.startedAt, NOW)
-  assert.equal(execution.completedAt, NOW)
-  assert.equal(execution.updatedAt, NOW)
+  assert.equal(executions(fixture).length, 0)
 
   assert.deepEqual(
     activities(fixture).map((activity) => ({
@@ -389,21 +381,6 @@ test("moveCard into In Progress records dry-run execution lifecycle", async () =
         type: "card_moved",
         executionStatus: undefined,
         message: 'Moved card "Card 2" from "Backlog" to "In Progress"',
-      },
-      {
-        type: "execution_transition",
-        executionStatus: "queued",
-        message: 'Execution queued for "Card 2" (dry run)',
-      },
-      {
-        type: "execution_transition",
-        executionStatus: "running",
-        message: 'Execution running for "Card 2" (dry run)',
-      },
-      {
-        type: "execution_transition",
-        executionStatus: "succeeded",
-        message: 'Execution succeeded for "Card 2" (dry run)',
       },
     ]
   )

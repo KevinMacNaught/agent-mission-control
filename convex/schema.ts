@@ -80,13 +80,17 @@ export default defineSchema({
   executions: defineTable({
     boardId: v.id("boards"),
     cardId: v.id("cards"),
-    mode: v.union(v.literal("dry_run")),
+    mode: v.union(v.literal("openclaw_agent")),
     status: v.union(
       v.literal("queued"),
       v.literal("running"),
       v.literal("succeeded"),
       v.literal("failed"),
     ),
+    runId: v.optional(v.string()),
+    sessionKey: v.optional(v.string()),
+    runLastUpdateAt: v.optional(v.number()),
+    taskPrompt: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
     startedAt: v.optional(v.number()),

@@ -18,12 +18,13 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { useMutation, useQuery } from "convex/react"
-import { ArrowRightLeft, GripVertical } from "lucide-react"
+import { ArrowRightLeft, GripVertical, RotateCcw } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 
@@ -45,9 +46,14 @@ type BoardCard = {
   order: number
   execution?: {
     _id: Id<"executions">
-    mode: "dry_run"
+    mode: "openclaw_agent"
     status: ExecutionStatus
     updatedAt: number
+    error?: string
+    runId?: string
+    sessionKey?: string
+    runLastUpdateAt?: number
+    taskPrompt?: string
   }
 }
 
@@ -134,7 +140,13 @@ function getExecutionBadgeLabel(status: ExecutionStatus) {
   return "Failed"
 }
 
-function SortableCardItem({ card }: { card: BoardCard }) {
+function SortableCardItem({
+  card,
+  onRetry,
+}: {
+  card: BoardCard
+  onRetry: (cardId: Id<"cards">) => void
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: createCardDragId(String(card._id)) })
 
@@ -157,17 +169,45 @@ function SortableCardItem({ card }: { card: BoardCard }) {
         <GripVertical className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
       </div>
       {card.execution ? (
-        <div className="mt-2">
+        <div className="mt-2 space-y-2">
           <Badge variant={getExecutionBadgeVariant(card.execution.status)}>
-            Dry run: {getExecutionBadgeLabel(card.execution.status)}
+            Live run: {getExecutionBadgeLabel(card.execution.status)}
           </Badge>
+          {card.execution.runId ? (
+            <p className="text-[11px] text-muted-foreground">Run: {card.execution.runId.slice(0, 8)}</p>
+          ) : null}
+          {card.execution.status === "failed" && card.execution.error ? (
+            <p className="text-[11px] text-destructive">{card.execution.error}</p>
+          ) : null}
+          {card.execution.status === "failed" ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 text-xs"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                onRetry(card._id)
+              }}
+            >
+              <RotateCcw className="size-3" />
+              Retry
+            </Button>
+          ) : null}
         </div>
       ) : null}
     </div>
   )
 }
 
-function SortableColumnItem({ column }: { column: BoardColumn }) {
+function SortableColumnItem({
+  column,
+  onRetry,
+}: {
+  column: BoardColumn
+  onRetry: (cardId: Id<"cards">) => void
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: createColumnDragId(String(column._id)) })
 
@@ -198,7 +238,7 @@ function SortableColumnItem({ column }: { column: BoardColumn }) {
           >
             <div className="space-y-2">
               {column.cards.map((card) => (
-                <SortableCardItem key={card._id} card={card} />
+                <SortableCardItem key={card._id} card={card} onRetry={onRetry} />
               ))}
               {column.cards.length === 0 ? (
                 <div className="rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
@@ -218,6 +258,8 @@ export function KanbanBoard() {
   const ensureBoard = useMutation(api.kanban.ensureBoard)
   const moveColumn = useMutation(api.kanban.moveColumn)
   const moveCard = useMutation(api.kanban.moveCard)
+  const startCardExecution = useMutation(api.kanban.startCardExecution)
+  const retryExecution = useMutation(api.kanban.retryExecution)
   const [moveError, setMoveError] = useState<string | null>(null)
   const seededBoardRef = useRef(false)
 
@@ -277,6 +319,13 @@ export function KanbanBoard() {
     }
 
     return null
+  }
+
+  const handleRetry = (cardId: Id<"cards">) => {
+    setMoveError(null)
+    void retryExecution({ boardId: board._id, cardId }).catch(() => {
+      setMoveError("Could not retry run.")
+    })
   }
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -368,9 +417,20 @@ export function KanbanBoard() {
       sourceColumnId: sourcePosition.columnId,
       targetColumnId,
       toIndex: targetIndex,
-    }).catch(() => {
-      setMoveError("Could not move card.")
     })
+      .then(() => {
+        const targetColumn = columns.find((column) => column._id === targetColumnId)
+        if (targetColumn?.title === "In Progress") {
+          return startCardExecution({
+            boardId: board._id,
+            cardId: activeTarget.id as Id<"cards">,
+          })
+        }
+        return null
+      })
+      .catch(() => {
+        setMoveError("Could not move card.")
+      })
   }
 
   return (
@@ -397,7 +457,11 @@ export function KanbanBoard() {
             >
               <div className="flex gap-4 overflow-x-auto pb-2">
                 {columns.map((column) => (
-                  <SortableColumnItem key={column._id} column={column} />
+                  <SortableColumnItem
+                    key={column._id}
+                    column={column}
+                    onRetry={handleRetry}
+                  />
                 ))}
               </div>
             </SortableContext>

@@ -49,11 +49,13 @@ const boardColumns = [
 
 export default function Home() {
   const [repoInput, setRepoInput] = useState("KevinMacNaught/agent-mission-control");
+  const [taskInput, setTaskInput] = useState("");
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState<(typeof stateOptions)[number]>("all");
 
   const addRepository = useMutation(api.visibility.addRepository);
   const syncRepository = useMutation(api.visibility.syncRepository);
+  const createTaskCardAndStart = useMutation(api.kanban.createTaskCardAndStart);
 
   const dashboard = useQuery(api.visibility.getDashboard, {
     search: search.trim() ? search : undefined,
@@ -87,6 +89,13 @@ export default function Home() {
     const repositoryId = await addRepository({ fullName: repoInput });
     await syncRepository({ repositoryId });
     setRepoInput("");
+  };
+
+  const handleStartMission = async () => {
+    const task = taskInput.trim();
+    if (!task) return;
+    await createTaskCardAndStart({ task });
+    setTaskInput("");
   };
 
   return (
@@ -164,7 +173,7 @@ export default function Home() {
                   </p>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button variant="outline" size="sm">
                   <Bell className="size-4" />
                   Alerts
@@ -173,7 +182,13 @@ export default function Home() {
                   <CalendarClock className="size-4" />
                   Timeline
                 </Button>
-                <Button size="sm">
+                <Input
+                  value={taskInput}
+                  onChange={(event) => setTaskInput(event.target.value)}
+                  placeholder="Type task command"
+                  className="h-8 w-56"
+                />
+                <Button size="sm" onClick={handleStartMission}>
                   <Sparkles className="size-4" />
                   Start Mission
                 </Button>
