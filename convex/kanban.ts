@@ -1,6 +1,7 @@
 import { v } from "convex/values"
 
-import { mutation, query } from "./_generated/server"
+import { internal } from "./_generated/api.js"
+import { internalMutation, mutation, query } from "./_generated/server.js"
 import type { Doc, Id } from "./_generated/dataModel"
 
 const DEFAULT_COLUMNS = ["Backlog", "In Progress", "Done"] as const
@@ -19,8 +20,6 @@ const DEFAULT_CARDS = [
     column: "Done",
   },
 ] as const
-
-const IN_PROGRESS_COLUMN_TITLE = "In Progress" as const
 
 type ExecutionStatus = "queued" | "running" | "succeeded" | "failed"
 
@@ -59,9 +58,7 @@ function clamp(value: number, min: number, max: number) {
   return value
 }
 
-async function getPrimaryBoard(
-  getBoards: () => Promise<Doc<"boards">[]>
-) {
+async function getPrimaryBoard(getBoards: () => Promise<Doc<"boards">[]>) {
   const boards = await getBoards()
 
   if (boards.length === 0) {
@@ -74,9 +71,7 @@ async function getPrimaryBoard(
 export const ensureBoard = mutation({
   args: {},
   handler: async (ctx) => {
-    const existingBoard = await getPrimaryBoard(() =>
-      ctx.db.query("boards").collect()
-    )
+    const existingBoard = await getPrimaryBoard(() => ctx.db.query("boards").collect())
 
     if (existingBoard) {
       return existingBoard._id
@@ -84,7 +79,7 @@ export const ensureBoard = mutation({
 
     const now = Date.now()
     const boardId = await ctx.db.insert("boards", {
-      name: "Milestone 2 Board",
+      name: "Mission Execution Board",
       createdAt: now,
       updatedAt: now,
     })
@@ -201,6 +196,141 @@ export const getBoard = query({
       })),
       activities,
     }
+  },
+})
+
+export const createCard = mutation({
+  args: {
+    boardId: v.id("boards"),
+    columnId: v.id("columns"),
+    title: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const title = args.title.trim()
+    if (!title) return null
+
+    const [board, column, columnCards] = await Promise.all([
+      ctx.db.get(args.boardId),
+      ctx.db.get(args.columnId),
+      ctx.db
+        .query("cards")
+        .withIndex("by_column_order", (q) => q.eq("columnId", args.columnId))
+        .collect(),
+    ])
+
+    if (!board || !column || column.boardId !== args.boardId) {
+      return null
+    }
+
+    const now = Date.now()
+    const cardId = await ctx.db.insert("cards", {
+      boardId: args.boardId,
+      columnId: args.columnId,
+      title,
+      order: columnCards.length,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    await ctx.db.patch(args.boardId, { updatedAt: now })
+    await ctx.db.insert("activities", {
+      boardId: args.boardId,
+      type: "card_moved",
+      message: `Created card "${title}" in "${column.title}"`,
+      cardId,
+      fromColumnId: args.columnId,
+      toColumnId: args.columnId,
+      fromIndex: columnCards.length,
+      toIndex: columnCards.length,
+      createdAt: now,
+    })
+
+    return cardId
+  },
+})
+
+export const startCardExecution = mutation({
+  args: {
+    boardId: v.id("boards"),
+    cardId: v.id("cards"),
+  },
+  handler: async (ctx, args) => {
+    const card = await ctx.db.get(args.cardId)
+    if (!card || card.boardId !== args.boardId) return null
+
+    const now = Date.now()
+    const executionId = await ctx.db.insert("executions", {
+      boardId: args.boardId,
+      cardId: args.cardId,
+      mode: "dry_run",
+      status: "queued",
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    await ctx.db.insert("activities", {
+      boardId: args.boardId,
+      type: "execution_transition",
+      message: getExecutionTransitionMessage("queued", card.title),
+      cardId: card._id,
+      executionId,
+      executionStatus: "queued",
+      fromIndex: 0,
+      toIndex: 0,
+      createdAt: now,
+    })
+
+    await ctx.scheduler.runAfter(800, internal.kanban.advanceExecution, {
+      boardId: args.boardId,
+      cardId: card._id,
+      executionId,
+      status: "running",
+    })
+
+    await ctx.scheduler.runAfter(2800, internal.kanban.advanceExecution, {
+      boardId: args.boardId,
+      cardId: card._id,
+      executionId,
+      status: "succeeded",
+    })
+
+    return executionId
+  },
+})
+
+export const advanceExecution = internalMutation({
+  args: {
+    boardId: v.id("boards"),
+    cardId: v.id("cards"),
+    executionId: v.id("executions"),
+    status: v.union(v.literal("running"), v.literal("succeeded"), v.literal("failed")),
+  },
+  handler: async (ctx, args) => {
+    const [card, execution] = await Promise.all([ctx.db.get(args.cardId), ctx.db.get(args.executionId)])
+
+    if (!card || !execution || execution.boardId !== args.boardId || execution.cardId !== args.cardId) {
+      return
+    }
+
+    const now = Date.now()
+    await ctx.db.patch(args.executionId, {
+      status: args.status,
+      startedAt: args.status === "running" ? now : execution.startedAt,
+      completedAt: args.status === "succeeded" || args.status === "failed" ? now : execution.completedAt,
+      updatedAt: now,
+    })
+
+    await ctx.db.insert("activities", {
+      boardId: args.boardId,
+      type: "execution_transition",
+      message: getExecutionTransitionMessage(args.status, card.title),
+      cardId: card._id,
+      executionId: execution._id,
+      executionStatus: args.status,
+      fromIndex: 0,
+      toIndex: 0,
+      createdAt: now,
+    })
   },
 })
 
@@ -346,9 +476,7 @@ export const moveCard = mutation({
       .collect()
 
     const toIndex = clamp(args.toIndex, 0, targetCards.length)
-    const sourceWithoutMovedCard = sourceCards.filter(
-      (currentCard) => currentCard._id !== card._id
-    )
+    const sourceWithoutMovedCard = sourceCards.filter((currentCard) => currentCard._id !== card._id)
     const targetWithMovedCard = [...targetCards]
     targetWithMovedCard.splice(toIndex, 0, card)
 
@@ -398,93 +526,5 @@ export const moveCard = mutation({
       toIndex,
       createdAt: now,
     })
-
-    if (targetColumn.title !== IN_PROGRESS_COLUMN_TITLE) {
-      return
-    }
-
-    const queuedAt = Date.now()
-    const executionId = await ctx.db.insert("executions", {
-      boardId: args.boardId,
-      cardId: card._id,
-      mode: "dry_run",
-      status: "queued",
-      createdAt: queuedAt,
-      updatedAt: queuedAt,
-    })
-
-    await ctx.db.insert("activities", {
-      boardId: args.boardId,
-      type: "execution_transition",
-      message: getExecutionTransitionMessage("queued", card.title),
-      cardId: card._id,
-      executionId,
-      executionStatus: "queued",
-      fromIndex: 0,
-      toIndex: 0,
-      createdAt: queuedAt,
-    })
-
-    try {
-      const runningAt = Date.now()
-      await ctx.db.patch(executionId, {
-        status: "running",
-        startedAt: runningAt,
-        updatedAt: runningAt,
-      })
-
-      await ctx.db.insert("activities", {
-        boardId: args.boardId,
-        type: "execution_transition",
-        message: getExecutionTransitionMessage("running", card.title),
-        cardId: card._id,
-        executionId,
-        executionStatus: "running",
-        fromIndex: 0,
-        toIndex: 0,
-        createdAt: runningAt,
-      })
-
-      const succeededAt = Date.now()
-      await ctx.db.patch(executionId, {
-        status: "succeeded",
-        completedAt: succeededAt,
-        updatedAt: succeededAt,
-      })
-
-      await ctx.db.insert("activities", {
-        boardId: args.boardId,
-        type: "execution_transition",
-        message: getExecutionTransitionMessage("succeeded", card.title),
-        cardId: card._id,
-        executionId,
-        executionStatus: "succeeded",
-        fromIndex: 0,
-        toIndex: 0,
-        createdAt: succeededAt,
-      })
-    } catch (error) {
-      const failedAt = Date.now()
-      const executionError = error instanceof Error ? error.message : "Unknown execution error"
-
-      await ctx.db.patch(executionId, {
-        status: "failed",
-        error: executionError,
-        completedAt: failedAt,
-        updatedAt: failedAt,
-      })
-
-      await ctx.db.insert("activities", {
-        boardId: args.boardId,
-        type: "execution_transition",
-        message: getExecutionTransitionMessage("failed", card.title),
-        cardId: card._id,
-        executionId,
-        executionStatus: "failed",
-        fromIndex: 0,
-        toIndex: 0,
-        createdAt: failedAt,
-      })
-    }
   },
 })
