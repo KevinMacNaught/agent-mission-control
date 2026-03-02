@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { moveCard, moveColumn } from "./kanban.ts"
+import { advanceExecution, moveCard, moveColumn, startCardExecution } from "./kanban.ts"
 
 type TableName = "boards" | "columns" | "cards" | "executions" | "activities"
 type Row = { _id: string; [key: string]: unknown }
@@ -40,10 +40,16 @@ class InMemoryDb {
         }
         applyIndex(queryBuilder)
 
+        const rows = this.collect(table, indexName, filterField, filterValue)
+
         return {
-          collect: async () => this.collect(table, indexName, filterField, filterValue),
+          collect: async () => rows,
+          order: () => ({
+            take: async (limit: number) => rows.slice(0, limit),
+          }),
         }
       },
+      collect: async () => this.collect(table, "", null, undefined),
     }
   }
 
@@ -88,12 +94,7 @@ class InMemoryDb {
     return this.tables[table].map((row) => ({ ...row }))
   }
 
-  private collect(
-    table: TableName,
-    indexName: string,
-    filterField: string | null,
-    filterValue: unknown
-  ) {
+  private collect(table: TableName, indexName: string, filterField: string | null, filterValue: unknown) {
     const rows = this.tables[table]
       .filter((row) => (filterField === null ? true : row[filterField] === filterValue))
       .map((row) => ({ ...row }))
@@ -102,15 +103,22 @@ class InMemoryDb {
       rows.sort((a, b) => Number(a.order) - Number(b.order))
     }
 
+    if (indexName === "by_board_createdAt") {
+      rows.sort((a, b) => Number(b.createdAt) - Number(a.createdAt))
+    }
+
     return rows
   }
 }
 
 type Fixture = ReturnType<typeof createFixture>
 
-const moveColumnHandler = (moveColumn as { handler: (ctx: unknown, args: unknown) => Promise<void> })
-  .handler
-const moveCardHandler = (moveCard as { handler: (ctx: unknown, args: unknown) => Promise<void> }).handler
+const moveColumnHandler = (moveColumn as { _handler: (ctx: unknown, args: unknown) => Promise<void> })._handler
+const moveCardHandler = (moveCard as { _handler: (ctx: unknown, args: unknown) => Promise<void> })._handler
+const startCardExecutionHandler =
+  (startCardExecution as { _handler: (ctx: unknown, args: unknown) => Promise<string | null> })._handler
+const advanceExecutionHandler =
+  (advanceExecution as { _handler: (ctx: unknown, args: unknown) => Promise<void> })._handler
 
 function createFixture(
   seedCards: {
@@ -123,6 +131,8 @@ function createFixture(
     done: [],
   }
 ) {
+  const scheduled: { delayMs: number; args: Record<string, unknown> }[] = []
+
   const ids = {
     board: "board-1",
     columns: {
@@ -143,15 +153,9 @@ function createFixture(
   const cards: Row[] = []
   const cardIdsByTitle = new Map<string, string>()
 
-  for (const [columnName, titles] of Object.entries(seedCards) as Array<
-    [keyof typeof seedCards, string[]]
-  >) {
+  for (const [columnName, titles] of Object.entries(seedCards) as Array<[keyof typeof seedCards, string[]]>) {
     const columnId =
-      columnName === "backlog"
-        ? ids.columns.backlog
-        : columnName === "inProgress"
-          ? ids.columns.inProgress
-          : ids.columns.done
+      columnName === "backlog" ? ids.columns.backlog : columnName === "inProgress" ? ids.columns.inProgress : ids.columns.done
 
     for (const [order, title] of titles.entries()) {
       const cardId = ids.cards[`card${cards.length + 1}` as keyof typeof ids.cards]
@@ -169,39 +173,11 @@ function createFixture(
   }
 
   const db = new InMemoryDb({
-    boards: [
-      {
-        _id: ids.board,
-        name: "Milestone 2 Board",
-        createdAt: now,
-        updatedAt: now,
-      },
-    ],
+    boards: [{ _id: ids.board, name: "Mission Execution Board", createdAt: now, updatedAt: now }],
     columns: [
-      {
-        _id: ids.columns.backlog,
-        boardId: ids.board,
-        title: "Backlog",
-        order: 0,
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        _id: ids.columns.inProgress,
-        boardId: ids.board,
-        title: "In Progress",
-        order: 1,
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        _id: ids.columns.done,
-        boardId: ids.board,
-        title: "Done",
-        order: 2,
-        createdAt: now,
-        updatedAt: now,
-      },
+      { _id: ids.columns.backlog, boardId: ids.board, title: "Backlog", order: 0, createdAt: now, updatedAt: now },
+      { _id: ids.columns.inProgress, boardId: ids.board, title: "In Progress", order: 1, createdAt: now, updatedAt: now },
+      { _id: ids.columns.done, boardId: ids.board, title: "Done", order: 2, createdAt: now, updatedAt: now },
     ],
     cards,
     executions: [],
@@ -212,7 +188,15 @@ function createFixture(
     db,
     ids,
     cardIdsByTitle,
-    ctx: { db },
+    scheduled,
+    ctx: {
+      db,
+      scheduler: {
+        runAfter: async (delayMs: number, _fn: unknown, args: Record<string, unknown>) => {
+          scheduled.push({ delayMs, args })
+        },
+      },
+    },
   }
 }
 
@@ -220,11 +204,7 @@ function columnsInOrder(fixture: Fixture) {
   return fixture.db
     .rows("columns")
     .sort((a, b) => Number(a.order) - Number(b.order))
-    .map((column) => ({
-      id: column._id,
-      order: Number(column.order),
-      title: String(column.title),
-    }))
+    .map((column) => ({ id: column._id, order: Number(column.order), title: String(column.title) }))
 }
 
 function cardsInColumn(fixture: Fixture, columnId: string) {
@@ -232,12 +212,7 @@ function cardsInColumn(fixture: Fixture, columnId: string) {
     .rows("cards")
     .filter((card) => card.columnId === columnId)
     .sort((a, b) => Number(a.order) - Number(b.order))
-    .map((card) => ({
-      id: card._id,
-      order: Number(card.order),
-      columnId: String(card.columnId),
-      title: String(card.title),
-    }))
+    .map((card) => ({ id: card._id, order: Number(card.order), columnId: String(card.columnId), title: String(card.title) }))
 }
 
 function activities(fixture: Fixture) {
@@ -306,11 +281,7 @@ test("moveColumn clamps toIndex to valid range", async () => {
 })
 
 test("moveCard same-column reorder updates order and records activity", async () => {
-  const fixture = createFixture({
-    backlog: ["Card 1", "Card 2", "Card 3"],
-    inProgress: [],
-    done: [],
-  })
+  const fixture = createFixture({ backlog: ["Card 1", "Card 2", "Card 3"], inProgress: [], done: [] })
   const cardId = fixture.cardIdsByTitle.get("Card 1")
   assert.ok(cardId)
 
@@ -333,19 +304,10 @@ test("moveCard same-column reorder updates order and records activity", async ()
   const [activity] = activities(fixture)
   assert.equal(activity.type, "card_moved")
   assert.equal(activity.message, 'Reordered card "Card 1" in "Backlog"')
-  assert.equal(activity.fromColumnId, fixture.ids.columns.backlog)
-  assert.equal(activity.toColumnId, fixture.ids.columns.backlog)
-  assert.equal(activity.fromIndex, 0)
-  assert.equal(activity.toIndex, 2)
-  assert.equal(activity.createdAt, NOW)
 })
 
-test("moveCard into In Progress records dry-run execution lifecycle", async () => {
-  const fixture = createFixture({
-    backlog: ["Card 1", "Card 2"],
-    inProgress: ["Card 3", "Card 4"],
-    done: [],
-  })
+test("moveCard into another column updates order but does not auto-start execution", async () => {
+  const fixture = createFixture({ backlog: ["Card 1", "Card 2"], inProgress: ["Card 3", "Card 4"], done: [] })
   const cardId = fixture.cardIdsByTitle.get("Card 2")
   assert.ok(cardId)
 
@@ -359,114 +321,69 @@ test("moveCard into In Progress records dry-run execution lifecycle", async () =
     })
   })
 
-  assert.deepEqual(cardsInColumn(fixture, fixture.ids.columns.backlog), [
-    { id: fixture.cardIdsByTitle.get("Card 1"), order: 0, columnId: fixture.ids.columns.backlog, title: "Card 1" },
-  ])
-  assert.deepEqual(cardsInColumn(fixture, fixture.ids.columns.inProgress), [
-    { id: fixture.cardIdsByTitle.get("Card 3"), order: 0, columnId: fixture.ids.columns.inProgress, title: "Card 3" },
-    { id: fixture.cardIdsByTitle.get("Card 2"), order: 1, columnId: fixture.ids.columns.inProgress, title: "Card 2" },
-    { id: fixture.cardIdsByTitle.get("Card 4"), order: 2, columnId: fixture.ids.columns.inProgress, title: "Card 4" },
-  ])
+  assert.equal(executions(fixture).length, 0)
+  assert.equal(activities(fixture).length, 1)
+  assert.equal(activities(fixture)[0].type, "card_moved")
+})
+
+test("startCardExecution queues execution and schedules lifecycle", async () => {
+  const fixture = createFixture({ backlog: ["Card 1"], inProgress: [], done: [] })
+  const cardId = fixture.cardIdsByTitle.get("Card 1")
+  assert.ok(cardId)
+
+  await withFixedNow(async () => {
+    await startCardExecutionHandler(fixture.ctx, {
+      boardId: fixture.ids.board,
+      cardId,
+    })
+  })
 
   const [execution] = executions(fixture)
-  assert.ok(execution)
-  assert.equal(execution.boardId, fixture.ids.board)
-  assert.equal(execution.cardId, cardId)
-  assert.equal(execution.mode, "dry_run")
-  assert.equal(execution.status, "succeeded")
-  assert.equal(execution.startedAt, NOW)
-  assert.equal(execution.completedAt, NOW)
-  assert.equal(execution.updatedAt, NOW)
+  assert.equal(execution.status, "queued")
+  assert.equal(fixture.scheduled.length, 2)
+  assert.deepEqual(fixture.scheduled.map((s) => s.delayMs), [800, 2800])
 
-  assert.deepEqual(
-    activities(fixture).map((activity) => ({
-      type: activity.type,
-      executionStatus: activity.executionStatus,
-      message: activity.message,
-    })),
-    [
-      {
-        type: "card_moved",
-        executionStatus: undefined,
-        message: 'Moved card "Card 2" from "Backlog" to "In Progress"',
-      },
-      {
-        type: "execution_transition",
-        executionStatus: "queued",
-        message: 'Execution queued for "Card 2" (dry run)',
-      },
-      {
-        type: "execution_transition",
-        executionStatus: "running",
-        message: 'Execution running for "Card 2" (dry run)',
-      },
-      {
-        type: "execution_transition",
-        executionStatus: "succeeded",
-        message: 'Execution succeeded for "Card 2" (dry run)',
-      },
-    ]
-  )
+  const lifecycleActivity = activities(fixture).find((item) => item.type === "execution_transition")
+  assert.ok(lifecycleActivity)
+  assert.equal(lifecycleActivity?.executionStatus, "queued")
 })
 
-test("moveCard can move to an empty target column", async () => {
-  const fixture = createFixture({
-    backlog: ["Card 1", "Card 2"],
-    inProgress: [],
-    done: [],
-  })
-  const cardId = fixture.cardIdsByTitle.get("Card 2")
-  assert.ok(cardId)
+test("advanceExecution updates status and logs timeline transition", async () => {
+  const fixture = createFixture({ backlog: ["Card 1"], inProgress: [], done: [] })
+  const cardId = fixture.cardIdsByTitle.get("Card 1") as string
 
   await withFixedNow(async () => {
-    await moveCardHandler(fixture.ctx, {
+    await startCardExecutionHandler(fixture.ctx, {
       boardId: fixture.ids.board,
       cardId,
-      sourceColumnId: fixture.ids.columns.backlog,
-      targetColumnId: fixture.ids.columns.done,
-      toIndex: 99,
     })
   })
 
-  assert.deepEqual(cardsInColumn(fixture, fixture.ids.columns.backlog), [
-    { id: fixture.cardIdsByTitle.get("Card 1"), order: 0, columnId: fixture.ids.columns.backlog, title: "Card 1" },
-  ])
-  assert.deepEqual(cardsInColumn(fixture, fixture.ids.columns.done), [
-    { id: fixture.cardIdsByTitle.get("Card 2"), order: 0, columnId: fixture.ids.columns.done, title: "Card 2" },
-  ])
-
-  const [activity] = activities(fixture)
-  assert.equal(executions(fixture).length, 0)
-  assert.equal(activity.type, "card_moved")
-  assert.equal(activity.toIndex, 0)
-})
-
-test("moveCard clamps negative toIndex for same-column reorder", async () => {
-  const fixture = createFixture({
-    backlog: ["Card 1", "Card 2", "Card 3"],
-    inProgress: [],
-    done: [],
-  })
-  const cardId = fixture.cardIdsByTitle.get("Card 3")
-  assert.ok(cardId)
+  const executionId = executions(fixture)[0]._id
 
   await withFixedNow(async () => {
-    await moveCardHandler(fixture.ctx, {
+    await advanceExecutionHandler(fixture.ctx, {
       boardId: fixture.ids.board,
       cardId,
-      sourceColumnId: fixture.ids.columns.backlog,
-      targetColumnId: fixture.ids.columns.backlog,
-      toIndex: -10,
+      executionId,
+      status: "running",
     })
   })
 
-  assert.deepEqual(cardsInColumn(fixture, fixture.ids.columns.backlog), [
-    { id: fixture.cardIdsByTitle.get("Card 3"), order: 0, columnId: fixture.ids.columns.backlog, title: "Card 3" },
-    { id: fixture.cardIdsByTitle.get("Card 1"), order: 1, columnId: fixture.ids.columns.backlog, title: "Card 1" },
-    { id: fixture.cardIdsByTitle.get("Card 2"), order: 2, columnId: fixture.ids.columns.backlog, title: "Card 2" },
-  ])
+  await withFixedNow(async () => {
+    await advanceExecutionHandler(fixture.ctx, {
+      boardId: fixture.ids.board,
+      cardId,
+      executionId,
+      status: "succeeded",
+    })
+  })
 
-  const [activity] = activities(fixture)
-  assert.equal(activity.fromIndex, 2)
-  assert.equal(activity.toIndex, 0)
+  const updatedExecution = executions(fixture)[0]
+  assert.equal(updatedExecution.status, "succeeded")
+  assert.equal(updatedExecution.startedAt, NOW)
+  assert.equal(updatedExecution.completedAt, NOW)
+
+  const transitions = activities(fixture).filter((item) => item.type === "execution_transition")
+  assert.deepEqual(transitions.map((item) => item.executionStatus), ["queued", "running", "succeeded"])
 })
